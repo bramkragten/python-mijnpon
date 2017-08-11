@@ -65,7 +65,7 @@ class Driver(object):
 
 class MijnPon(object):
     def __init__(self, client_id, client_secret, username, password, cache_ttl=270,
-                 user_agent='python-mijnpon/0.1',
+                 user_agent='iOS10.3.3 (Apple iPhone),app3.0.1,pon',
                  token=None, token_cache_file=None,
                  local_time=False):
         self._client_id = client_id
