@@ -63,6 +63,64 @@ class Driver(object):
         return self.first_name + ' ' + self.sur_name
 
 
+class Position(object):
+    def __init__(self, position, mijnpon_api, local_time=False):
+        self._mijnpon_api = mijnpon_api
+        self._local_time = local_time
+        self._position = position
+
+    def __repr__(self):
+        return '<%s: %s>' % (self.__class__.__name__, self._repr_name)
+
+    @property
+    def address(self):
+        return self._position['Address']
+
+    @property
+    def street(self):
+        return self.address['Street']
+
+    @property
+    def postal_code(self):
+        return self.address['PostalCode']
+
+    @property
+    def city(self):
+        return self.address['City']
+
+    @property
+    def state(self):
+        return self.address['State']
+
+    @property
+    def country(self):
+        return self.address['Country']
+
+    @property
+    def reverse_geocoding_status(self):
+        return self.address['ReverseGeocodingStatus']
+
+    @property
+    def _result(self):
+        return self._position['Result']
+
+    @property
+    def coordinate(self):
+        return self._result['Coordinate']
+
+    @property
+    def latitude(self):
+        return self.coordinate['Latitude']
+
+    @property
+    def longitude(self):
+        return self.coordinate['Longitude']
+
+    @property
+    def _repr_name(self):
+        return self.street + ' ' + self.city
+
+
 class MijnPon(object):
     def __init__(self, client_id, client_secret, username, password, cache_ttl=270,
                  user_agent='iOS10.3.3 (Apple iPhone),app3.0.1,pon',
@@ -167,9 +225,25 @@ class MijnPon(object):
         return value['Result']
 
     @property
+    def _lastknownposition(self):
+        cache_key = 'lastknownposition'
+        value, last_update = self._checkCache(cache_key)
+        now = time.time()
+
+        if not value or now - last_update > self._cache_ttl:
+            value = self._get('drivers/currentdriver/lastknownposition')
+            self._cache[cache_key] = (value, now)
+
+        return value
+
+    @property
     def drivers(self):
         return [Driver(driver, self, self._local_time)
                 for driver in self._drivers]
+
+    @property
+    def lastknownposition(self):
+        return Position(self._lastknownposition, self, self._local_time)
 
     @property
     def vehicles(self):
