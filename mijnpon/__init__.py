@@ -6,7 +6,8 @@ import requests
 #import json
 from requests.compat import json
 from requests_oauthlib import OAuth2Session
-from legacy_application_jwt import LegacyApplicationClientJWT
+from oauthlib.oauth2 import TokenExpiredError
+from mijnpon.legacy_application_jwt import LegacyApplicationClientJWT
 import urllib.parse
 
 BASE_URL = 'https://api3.fleetwin.net/mob/1.0/'
@@ -16,21 +17,48 @@ SCOPE = ['https://api3.fleetwin.net/mob/1.0']
 
 
 class Vehicle(object):
-    def __init__(self, vehicle, mijnpon_api, local_time=False):
+    def __init__(self, vehicleId, mijnpon_api, local_time=False):
         self._mijnpon_api = mijnpon_api
+        self.vehicleId = vehicleId;
         self._local_time = local_time
-        self._vehicle = vehicle
+#        self._vehicle = self._mijnpon_api.vehicle(self.vehicleId)
 
     def __repr__(self):
         return '<%s: %s>' % (self.__class__.__name__, self._repr_name)
 
     @property
+    def _vehicle(self):
+        return self._mijnpon_api._vehicle(self.vehicleId)
+        # self._vehicle.get('Id')
+
+    @property
     def id(self):
-        return self._vehicle['Id']
+        return self.vehicleId
+        # self._vehicle.get('Id')
 
     @property
     def license_plate(self):
-        return self._vehicle['LicensePlate']
+        return self._vehicle.get('LicensePlate')
+
+    @property
+    def mileage(self):
+        return self._vehicle.get('Mileage')
+
+    @property
+    def fuelremainder(self):
+      return self._mijnpon_api._fuelremainder(self.vehicleId)
+
+    @property
+    def fuel_left(self):
+      return self.fuelremainder.get('FuelLeft')
+
+    @property
+    def mileage_left(self):
+      return self.fuelremainder.get('MileageLeft')
+
+    @property
+    def measureddata(self):
+      return self._mijnpon_api._measureddata(self.vehicleId)
 
     @property
     def _repr_name(self):
@@ -48,15 +76,15 @@ class Driver(object):
 
     @property
     def id(self):
-        return self._driver['Id']
+        return self._driver.get('Id')
 
     @property
     def first_name(self):
-        return self._driver['FirstName']
+        return self._driver.get('FirstName')
 
     @property
     def sur_name(self):
-        return self._driver['SurName']
+        return self._driver.get('SurName')
 
     @property
     def _repr_name(self):
@@ -64,57 +92,60 @@ class Driver(object):
 
 
 class Position(object):
-    def __init__(self, position, mijnpon_api, local_time=False):
+    def __init__(self, mijnpon_api, local_time=False):
         self._mijnpon_api = mijnpon_api
         self._local_time = local_time
-        self._position = position
 
     def __repr__(self):
         return '<%s: %s>' % (self.__class__.__name__, self._repr_name)
 
     @property
+    def _position(self):
+        return self._mijnpon_api._lastknownposition
+
+    @property
     def address(self):
-        return self._position['Address']
+        return self._position.get('Address')
 
     @property
     def street(self):
-        return self.address['Street']
+        return self.address.get('Street')
 
     @property
     def postal_code(self):
-        return self.address['PostalCode']
+        return self.address.get('PostalCode')
 
     @property
     def city(self):
-        return self.address['City']
+        return self.address.get('City')
 
     @property
     def state(self):
-        return self.address['State']
+        return self.address.get('State')
 
     @property
     def country(self):
-        return self.address['Country']
+        return self.address.get('Country')
 
     @property
     def reverse_geocoding_status(self):
-        return self.address['ReverseGeocodingStatus']
+        return self.address.get('ReverseGeocodingStatus')
 
     @property
     def _result(self):
-        return self._position['Result']
+        return self._position.get('Result')
 
     @property
     def coordinate(self):
-        return self._result['Coordinate']
+        return self._result.get('Coordinate')
 
     @property
     def latitude(self):
-        return self.coordinate['Latitude']
+        return self.coordinate.get('Latitude')
 
     @property
     def longitude(self):
-        return self.coordinate['Longitude']
+        return self.coordinate.get('Longitude')
 
     @property
     def _repr_name(self):
@@ -122,7 +153,7 @@ class Position(object):
 
 
 class MijnPon(object):
-    def __init__(self, client_id, client_secret, username, password, cache_ttl=270,
+    def __init__(self, client_id='f5qbSDVQSyBnHv4cuDvQKImli0H6nvhsR3HJ066+HYA=', client_secret='CjAL01lJ/7XktXUUl2j+1E6iwEbjXB7PqoqkM1kstUw=', username, password, cache_ttl=270,
                  user_agent='iOS10.3.3 (Apple iPhone),app3.0.1,pon',
                  token=None, token_cache_file=None,
                  local_time=False):
@@ -169,16 +200,21 @@ class MijnPon(object):
     def _get(self, endpoint, **params):
         query_string = urllib.parse.urlencode(params)
         url = BASE_URL + endpoint + '?' + query_string
-        response = self._mijnPonApi.get(url)
-        response.raise_for_status()
-        return response.json()
+        try:
+          response = self._mijnPonApi.get(url)
+          response.raise_for_status()
+          return response.json()
+        except TokenExpiredError:
+          token = self._mijnPonApi.refresh_token(REFRESH_URL)
+          self._token_saver(token)
+          self._get(endpoint, params)
 
     def _post(self, endpoint, data, **params):
         query_string = urllib.parse.urlencode(params)
         url = BASE_URL + endpoint + '?' + query_string
         response = self._mijnPonApi.post(url, json=data, client_id=self._client_id,
                                        client_secret=self._client_secret)
-        #response.raise_for_status()
+        response.raise_for_status()
         return response.status_code
 
     def _checkCache(self, cache_key):
@@ -210,7 +246,12 @@ class MijnPon(object):
             value = self._get('vehicles')
             self._cache[cache_key] = (value, now)
 
-        return value['Result']
+        return value.get('Result')
+
+    def _vehicle(self, vehicleId):
+        for vehicle in self._vehicles:
+            if vehicle.get('Id') == vehicleId:
+                return vehicle
 
     @property
     def _drivers(self):
@@ -222,7 +263,7 @@ class MijnPon(object):
             value = self._get('drivers')
             self._cache[cache_key] = (value, now)
 
-        return value['Result']
+        return value.get('Result')
 
     @property
     def _lastknownposition(self):
@@ -236,6 +277,32 @@ class MijnPon(object):
 
         return value
 
+    def _fuelremainder(self, vehicleId):
+        cache_key = 'fuelremainder-%s' % vehicleId
+        value, last_update = self._checkCache(cache_key)
+        now = time.time()
+
+        if not value or now - last_update > self._cache_ttl:
+            value = self._get('driveassist/fuelremainder/%s' % vehicleId)
+            self._cache[cache_key] = (value, now)
+
+        return value.get('Result')
+
+    def _measureddata(self, vehicleId):
+        cache_key = 'measureddata-%s' % vehicleId
+        dict, last_update = self._checkCache(cache_key)
+        now = time.time()
+
+        if not dict or now - last_update > self._cache_ttl:
+            value = self._get('can/measureddata/latest/%s' % vehicleId)
+            dict = {}
+            for data in value.get('Result'):
+                dict[data['SignalName']] = data
+
+            self._cache[cache_key] = (dict, now)
+
+        return dict
+
     @property
     def drivers(self):
         return [Driver(driver, self, self._local_time)
@@ -243,9 +310,9 @@ class MijnPon(object):
 
     @property
     def lastknownposition(self):
-        return Position(self._lastknownposition, self, self._local_time)
+        return Position(self, self._local_time)
 
     @property
     def vehicles(self):
-        return [Vehicle(vehicle, self, self._local_time)
+        return [Vehicle(vehicle.get('Id'), self, self._local_time)
                 for vehicle in self._vehicles]
