@@ -153,7 +153,7 @@ class Position(object):
 
 
 class MijnPon(object):
-    def __init__(self, client_id='f5qbSDVQSyBnHv4cuDvQKImli0H6nvhsR3HJ066+HYA=', client_secret='CjAL01lJ/7XktXUUl2j+1E6iwEbjXB7PqoqkM1kstUw=', username, password, cache_ttl=270,
+    def __init__(self, username, password, client_id='f5qbSDVQSyBnHv4cuDvQKImli0H6nvhsR3HJ066+HYA=', client_secret='CjAL01lJ/7XktXUUl2j+1E6iwEbjXB7PqoqkM1kstUw=', cache_ttl=270,
                  user_agent='iOS10.3.3 (Apple iPhone),app3.0.1,pon',
                  token=None, token_cache_file=None,
                  local_time=False):
