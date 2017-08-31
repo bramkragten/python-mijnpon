@@ -2,13 +2,14 @@
 
 import os
 import time
-import requests
-#import json
+import logging
 from requests.compat import json
 from requests_oauthlib import OAuth2Session
 from oauthlib.oauth2 import TokenExpiredError
 from mijnpon.legacy_application_jwt import LegacyApplicationClientJWT
 import urllib.parse
+
+_LOGGER = logging.getLogger(__name__)
 
 BASE_URL = 'https://api3.fleetwin.net/mob/1.0/'
 TOKEN_URL = 'https://api3.fleetwin.net/sec/1.0/issue/oauth2/token'
@@ -136,6 +137,10 @@ class Position(object):
         return self._position.get('Result')
 
     @property
+    def speed(self):
+        return self._result.get('Speed')
+
+    @property
     def coordinate(self):
         return self._result.get('Coordinate')
 
@@ -193,8 +198,25 @@ class MijnPon(object):
         self._mijnPonApi.authorized
 
     def _auth(self):
-            self._mijnPonApi = OAuth2Session(client=LegacyApplicationClientJWT(client_id=self._client_id), scope=SCOPE, auto_refresh_url=REFRESH_URL, token_updater=self._token_saver)
+            self._mijnPonApi = OAuth2Session(client=LegacyApplicationClientJWT(client_id=self._client_id), scope=SCOPE)
             token = self._mijnPonApi.fetch_token(token_url=TOKEN_URL, username='pon\\'+self._username, password=self._password, client_id=self._client_id, client_secret=self._client_secret, scope=SCOPE)
+            self._token_saver(token)
+
+    def _reauth(self):
+        if (self._token_cache_file is not None and
+                    self._token is None and 
+                    os.path.exists(self._token_cache_file)):
+                with open(self._token_cache_file, 'r') as f:
+                    self._token = json.load(f)
+
+        if self._token is not None:
+
+#            self._mijnPonApi = OAuth2Session(client=LegacyApplicationClientJWT(client_id=self._client_id), scope=SCOPE, auto_refresh_url=REFRESH_URL, token_updater=self._token_saver, token=self._token)
+#            token = self._mijnPonApi.fetch_token(token_url=TOKEN_URL, username='pon\\'+self._username, password=self._password, client_id=self._client_id, client_secret=self._client_secret, scope=SCOPE)
+#            self._token_saver(token)
+
+            token = self._mijnPonApi.refresh_token(REFRESH_URL,
+                                                 refresh_token=self._token.get("refresh_token"))
             self._token_saver(token)
 
     def _get(self, endpoint, **params):
@@ -205,9 +227,12 @@ class MijnPon(object):
           response.raise_for_status()
           return response.json()
         except TokenExpiredError:
-          token = self._mijnPonApi.refresh_token(REFRESH_URL)
-          self._token_saver(token)
-          self._get(endpoint, params)
+          self._auth()
+          self._get(endpoint, **params)
+        except requests.HTTPError as e:
+            _LOGGER.error("HTTP Error MijnPon API: %s" % e)
+        except requests.exceptions.RequestException as e:
+            _LOGGER.error("Error MijnPon API: %s" % e)
 
     def _post(self, endpoint, data, **params):
         query_string = urllib.parse.urlencode(params)
