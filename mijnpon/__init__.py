@@ -3,6 +3,8 @@
 import os
 import time
 import logging
+from requests import HTTPError
+from requests.exceptions import RequestException
 from requests.compat import json
 from requests_oauthlib import OAuth2Session
 from oauthlib.oauth2 import TokenExpiredError
@@ -51,15 +53,26 @@ class Vehicle(object):
 
     @property
     def fuel_left(self):
-      return self.fuelremainder.get('FuelLeft')
+      if self.fuelremainder:
+        return self.fuelremainder.get('FuelLeft')
 
     @property
     def mileage_left(self):
-      return self.fuelremainder.get('MileageLeft')
+      if self.fuelremainder:
+        return self.fuelremainder.get('MileageLeft')
 
     @property
-    def measureddata(self):
+    def _measureddata(self):
       return self._mijnpon_api._measureddata(self.vehicleId)
+
+    def measureddata(self, signal_name):
+      if self._measureddata:
+        data = self._measureddata.get(signal_name)
+        if data:
+          if data.get('ValueType') == 'Boolean':
+            return data.get('ValueDecimal') == 1
+          else:
+            return data.get('ValueDecimal')
 
     @property
     def _repr_name(self):
@@ -106,51 +119,63 @@ class Position(object):
 
     @property
     def address(self):
-        return self._position.get('Address')
+        if self._position:
+          return self._position.get('Address')
 
     @property
     def street(self):
-        return self.address.get('Street')
+        if self.address:
+          return self.address.get('Street')
 
     @property
     def postal_code(self):
-        return self.address.get('PostalCode')
+        if self.address:
+          return self.address.get('PostalCode')
 
     @property
     def city(self):
-        return self.address.get('City')
+        if self.address:
+          return self.address.get('City')
 
     @property
     def state(self):
-        return self.address.get('State')
+        if self.address:
+          return self.address.get('State')
 
     @property
     def country(self):
-        return self.address.get('Country')
+        if self.address:
+          return self.address.get('Country')
 
     @property
     def reverse_geocoding_status(self):
-        return self.address.get('ReverseGeocodingStatus')
+        if self.address:
+          return self.address.get('ReverseGeocodingStatus')
 
     @property
     def _result(self):
-        return self._position.get('Result')
+        if self._position:
+          return self._position.get('Result')
 
     @property
     def speed(self):
-        return self._result.get('Speed')
+        if self._result:
+          return self._result.get('Speed')
 
     @property
     def coordinate(self):
-        return self._result.get('Coordinate')
+        if self._result:
+          return self._result.get('Coordinate')
 
     @property
     def latitude(self):
-        return self.coordinate.get('Latitude')
+        if self.coordinate:
+          return self.coordinate.get('Latitude')
 
     @property
     def longitude(self):
-        return self.coordinate.get('Longitude')
+        if self.coordinate:
+          return self.coordinate.get('Longitude')
 
     @property
     def _repr_name(self):
@@ -219,6 +244,14 @@ class MijnPon(object):
                                                  refresh_token=self._token.get("refresh_token"))
             self._token_saver(token)
 
+    @property
+    def cache_ttl(self):
+        return self._cache_ttl
+
+    @cache_ttl.setter
+    def cache_ttl(self, value):
+        self._cache_ttl = value
+
     def _get(self, endpoint, **params):
         query_string = urllib.parse.urlencode(params)
         url = BASE_URL + endpoint + '?' + query_string
@@ -227,11 +260,12 @@ class MijnPon(object):
           response.raise_for_status()
           return response.json()
         except TokenExpiredError:
+          _LOGGER.info("Token Expired")
           self._auth()
-          self._get(endpoint, **params)
-        except requests.HTTPError as e:
+          return self._get(endpoint, **params)
+        except HTTPError as e:
             _LOGGER.error("HTTP Error MijnPon API: %s" % e)
-        except requests.exceptions.RequestException as e:
+        except RequestException as e:
             _LOGGER.error("Error MijnPon API: %s" % e)
 
     def _post(self, endpoint, data, **params):
@@ -256,11 +290,6 @@ class MijnPon(object):
     def _bust_cache(self, cache_key):
         self._cache[cache_key] = (None, 0)
 
-    def _location(self, locationId):
-        for location in self._locations:
-            if location['locationID'] == locationId:
-                return location
-
     @property
     def _vehicles(self):
         cache_key = 'vehicles'
@@ -268,15 +297,19 @@ class MijnPon(object):
         now = time.time()
 
         if not value or now - last_update > self._cache_ttl:
-            value = self._get('vehicles')
-            self._cache[cache_key] = (value, now)
+            new_value = self._get('vehicles')
+            if new_value:
+              value = new_value
+              self._cache[cache_key] = (value, now)
 
-        return value.get('Result')
+        if value:
+          return value.get('Result')
 
     def _vehicle(self, vehicleId):
-        for vehicle in self._vehicles:
-            if vehicle.get('Id') == vehicleId:
-                return vehicle
+        if self._vehicles:
+          for vehicle in self._vehicles:
+              if vehicle.get('Id') == vehicleId:
+                  return vehicle
 
     @property
     def _drivers(self):
@@ -285,10 +318,12 @@ class MijnPon(object):
         now = time.time()
 
         if not value or now - last_update > self._cache_ttl:
-            value = self._get('drivers')
-            self._cache[cache_key] = (value, now)
-
-        return value.get('Result')
+            new_value = self._get('drivers')
+            if new_value:
+              value = new_value
+              self._cache[cache_key] = (value, now)
+        if value:
+          return value.get('Result')
 
     @property
     def _lastknownposition(self):
@@ -297,8 +332,10 @@ class MijnPon(object):
         now = time.time()
 
         if not value or now - last_update > self._cache_ttl:
-            value = self._get('drivers/currentdriver/lastknownposition')
-            self._cache[cache_key] = (value, now)
+            new_value = self._get('drivers/currentdriver/lastknownposition')
+            if new_value:
+              value = new_value
+              self._cache[cache_key] = (value, now)
 
         return value
 
@@ -308,10 +345,12 @@ class MijnPon(object):
         now = time.time()
 
         if not value or now - last_update > self._cache_ttl:
-            value = self._get('driveassist/fuelremainder/%s' % vehicleId)
-            self._cache[cache_key] = (value, now)
-
-        return value.get('Result')
+            new_value = self._get('driveassist/fuelremainder/%s' % vehicleId)
+            if new_value:
+              value = new_value
+              self._cache[cache_key] = (value, now)
+        if value:
+          return value.get('Result')
 
     def _measureddata(self, vehicleId):
         cache_key = 'measureddata-%s' % vehicleId
@@ -319,12 +358,13 @@ class MijnPon(object):
         now = time.time()
 
         if not dict or now - last_update > self._cache_ttl:
-            value = self._get('can/measureddata/latest/%s' % vehicleId)
-            dict = {}
-            for data in value.get('Result'):
-                dict[data['SignalName']] = data
-
-            self._cache[cache_key] = (dict, now)
+            new_value = self._get('can/measureddata/latest/%s' % vehicleId)
+            if new_value:
+              dict = {}
+              for data in new_value.get('Result'):
+                  dict[data['SignalName']] = data
+  
+              self._cache[cache_key] = (dict, now)
 
         return dict
 
